@@ -1,2 +1,5 @@
 # text-2-sql-langchain
-Integrate Langchain in NodeJS
+npm install
+
+# To Run 
+npm start

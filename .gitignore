@@ -1,0 +1,38 @@
+# Dependency directories
+node_modules/
+
+
+# Environment configuration files
+.env
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional nyc test coverage
+coverage
+
+# Optional artifacts
+build
+
+package-lock.json
+
+.DS_Store
+
+db-dumps/
