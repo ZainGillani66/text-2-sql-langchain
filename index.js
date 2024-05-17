@@ -1,12 +1,13 @@
 require('dotenv').config();
-
 const express = require('express');
 const { ChatOpenAI } = require("@langchain/openai");
 const { createSqlQueryChain } = require("langchain/chains/sql_db");
 const { SqlDatabase } = require("langchain/sql_db");
 const { DataSource } = require("typeorm");
 const { QuerySqlTool } = require("langchain/tools/sql");
-const axios = require('axios');
+const { PromptTemplate } = require("@langchain/core/prompts");
+const { StringOutputParser } = require("@langchain/core/output_parsers");
+const { RunnablePassthrough, RunnableSequence } = require("@langchain/core/runnables");
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -23,6 +24,8 @@ async function initialize() {
         database: process.env.DB_DATABASE,
     });
 
+    await datasource.initialize(); 
+
     const db = await SqlDatabase.fromDataSourceParams({
         appDataSource: datasource,
     });
@@ -34,59 +37,56 @@ async function initialize() {
         llm,
         db,
         dialect: "mysql",
-        k: 10000,
+        k: 10000
     });
 
-    return { writeQuery, executeQuery };
+    const answerPrompt = PromptTemplate.fromTemplate(`Given the following user question, corresponding SQL query , and SQL result, answer the user question.
+    
+    Question: {question}
+    SQL Query: {query}
+    SQL Result: {result}
+    Answer: `);
+
+    const answerChain = answerPrompt.pipe(llm).pipe(new StringOutputParser());
+
+    const chain = RunnableSequence.from([
+        RunnablePassthrough.assign({ query: writeQuery }).assign({
+            result: (i) => executeQuery.invoke(i.query),
+        }),
+        answerChain,
+    ]);
+
+    return chain;
 }
-
-const generateHTML = async (result) => {
-    const prompt = `Generate HTML code for displaying SQL query results: ${JSON.stringify(result)}`;
-
-    try {
-        const response = await axios.post(
-            'https://api.openai.com/v1/chat/completions',
-            {
-                model: "gpt-3.5-turbo",
-                messages: [{ role: "user", content: prompt }],
-                max_tokens: 150,
-                n: 1,
-                stop: null,
-                temperature: 0.7,
-            },
-            {
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-                },
-            }
-        );
-
-        const htmlCode = response.data.choices[0].message.content.trim();
-        return htmlCode;
-    } catch (error) {
-        console.error('Error generating HTML:', error.response ? error.response.data : error.message);
-        return null;
-    }
-};
 
 app.post('/search-prompt', async (req, res) => {
     try {
-        if (!req.body.domain) {
-            return res.status(400).json({ error: "Domain is required" });
+        if (!req.body.question || !req.body.domain) {
+            return res.status(400).json({ error: "Question and domain are required" });
         }
 
-        const { writeQuery, executeQuery } = await initialize();
+        const chain = await initialize();
 
-        const finalQuestion = { question: `${req.body.question} WHERE full_url LIKE ${req.body.domain}` };
+        const finalQuestion = {
+            question: `${req.body.question} WHERE full_url LIKE '%${req.body.domain}%'`
+        };
 
-        const result = await writeQuery.pipe(executeQuery).invoke(finalQuestion);
+        const result = await chain.invoke(finalQuestion);
 
-        const jsonResult = JSON.parse(result);
+        const htmlResponse = `
+            <html>
+            <head>
+                <title>Query Result</title>
+            </head>
+            <body>
+                <h1>Query Result</h1>
+                <p><strong>Question:</strong> ${req.body.question}</p>
+                <p><strong>Answer:</strong> ${result}</p>
+            </body>
+            </html>
+        `;
 
-        const htmlContent = await generateHTML(jsonResult);
-
-        res.json({ result: jsonResult, html: htmlContent });
+        res.send(htmlResponse);
     } catch (error) {
         console.error("Error in /search-prompt:", error);
         res.status(500).json({ error: "Internal Server Error" });
